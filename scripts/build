@@ -1,0 +1,13 @@
+#!/bin/bash
+set -euo pipefail
+root="$(dirname "$(dirname "$(realpath "$0")")")"
+configuration="${1:-debug}"
+swift build --package-path "$root" --configuration "$configuration"
+binary_directory="$(swift build --package-path "$root" --configuration "$configuration" --show-bin-path)"
+bundle="$root/.build/Veil.app"
+mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
+cp "$binary_directory/Veil" "$bundle/Contents/MacOS/Veil"
+cp -R "$binary_directory/Veil_Veil.bundle" "$bundle/Contents/Resources/"
+cp "$root/Resources/Info.plist" "$bundle/Contents/Info.plist"
+codesign --force --sign - "$bundle"
+printf '%s\n' "$bundle"
