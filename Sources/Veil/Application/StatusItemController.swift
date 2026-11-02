@@ -11,6 +11,7 @@ final class StatusItemController: NSObject {
   private var observation: AnyCancellable?
   private var clock: Timer?
   private var displayedReadings: [StatusReading] = []
+  private var isCompact = UserDefaults.standard.bool(forKey: "compactMenuBar")
 
   private struct StatusReading: Equatable {
     let percentage: Int?
@@ -71,6 +72,11 @@ final class StatusItemController: NSObject {
     let refresh = NSMenuItem(title: "Refresh", action: #selector(refreshUsage), keyEquivalent: "r")
     refresh.target = self
     menu.addItem(refresh)
+    let compact = NSMenuItem(
+      title: "Compact Menu Bar", action: #selector(toggleCompactMenuBar), keyEquivalent: "")
+    compact.target = self
+    compact.state = isCompact ? .on : .off
+    menu.addItem(compact)
 
     if store.states[.claude]?.failure == .credentialAccess {
       let connect = NSMenuItem(
@@ -112,6 +118,12 @@ final class StatusItemController: NSObject {
   @objc private func refreshUsage() { store.refresh() }
   @objc private func allowClaudeKeychainAccess() { store.allowClaudeKeychainAccess() }
 
+  @objc private func toggleCompactMenuBar() {
+    isCompact.toggle()
+    UserDefaults.standard.set(isCompact, forKey: "compactMenuBar")
+    updateStatusTitle(force: true)
+  }
+
   #if DEBUG
     @objc private func useConnectedAccounts() { store.useConnectedAccounts() }
 
@@ -120,7 +132,7 @@ final class StatusItemController: NSObject {
     }
   #endif
 
-  private func updateStatusTitle() {
+  private func updateStatusTitle(force: Bool = false) {
     let date = Date.now
     let readings = Provider.allCases.map { provider in
       let state = store.states[provider]
@@ -128,15 +140,23 @@ final class StatusItemController: NSObject {
         percentage: UsageText.remainingPercentage(state?.allowance, at: date),
         isOutOfDate: state?.failure != nil || (state?.allowance?.isStale(at: date) ?? false))
     }
-    if readings != displayedReadings {
-      let label = HStack(spacing: 9) {
-        ForEach(Array(Provider.allCases.enumerated()), id: \.element) { index, provider in
+    if force || readings != displayedReadings {
+      let layout =
+        isCompact
+        ? AnyLayout(VStackLayout(alignment: .leading, spacing: 0))
+        : AnyLayout(HStackLayout(spacing: 9))
+      let label = layout {
+        ForEach(Array(Provider.allCases.enumerated()), id: \.element) {
+          [isCompact] index, provider in
           HStack(spacing: 3) {
-            ProviderMark(provider: provider, size: 13)
+            ProviderMark(provider: provider, size: isCompact ? 9 : 13)
             Text(readings[index].percentage.map { "\($0)%" } ?? "—")
-              .font(.system(size: 11, weight: .medium))
+              .font(.system(size: isCompact ? 9 : 11, weight: .medium))
               .monospacedDigit()
+              .fixedSize()
+              .frame(width: isCompact ? 28 : nil, alignment: .leading)
           }
+          .frame(height: isCompact ? 9 : nil)
           .opacity(readings[index].isOutOfDate ? 0.45 : 1)
         }
       }
