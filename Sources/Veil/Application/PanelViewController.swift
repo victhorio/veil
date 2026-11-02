@@ -14,14 +14,25 @@ final class PanelViewController: NSViewController {
 
   override func loadView() {
     let hosting = NSHostingView(rootView: panel)
-    let material = NSVisualEffectView(frame: NSRect(origin: .zero, size: hosting.fittingSize))
+    hosting.translatesAutoresizingMaskIntoConstraints = false
+    let material = NSVisualEffectView()
     material.material = .popover
     material.blendingMode = .withinWindow
     material.state = .active
-    hosting.frame = material.bounds
-    hosting.autoresizingMask = [.width, .height]
     material.addSubview(hosting)
+    NSLayoutConstraint.activate([
+      hosting.leadingAnchor.constraint(equalTo: material.leadingAnchor),
+      hosting.trailingAnchor.constraint(equalTo: material.trailingAnchor),
+      hosting.topAnchor.constraint(equalTo: material.topAnchor),
+      hosting.bottomAnchor.constraint(equalTo: material.bottomAnchor),
+    ])
     view = material
-    preferredContentSize = material.frame.size
+    preferredContentSize = material.fittingSize
+  }
+
+  override func viewDidLayout() {
+    super.viewDidLayout()
+    let size = view.fittingSize
+    if preferredContentSize != size { preferredContentSize = size }
   }
 }
