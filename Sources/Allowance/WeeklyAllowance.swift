@@ -15,8 +15,8 @@ public enum Provider: String, CaseIterable, Hashable, Sendable {
 public enum WeeklyPace: Equatable, Sendable {
   case gatheringData
   case onPace
-  case reserve(percent: Int)
-  case overshoot(percent: Int)
+  case buffer(percentagePoints: Int)
+  case deficit(emptyAt: Date, reductionPercent: Double)
   case awaitingReset
 }
 
@@ -42,17 +42,24 @@ public struct WeeklyAllowance: Equatable, Sendable {
 
   public func pace(at date: Date) -> WeeklyPace {
     guard date < resetsAt else { return .awaitingReset }
+    if usedPercent == 100 { return .deficit(emptyAt: observedAt, reductionPercent: 100) }
 
     let observedDuration = observedAt.timeIntervalSince(windowStartedAt)
     guard observedDuration >= 3_600 else { return .gatheringData }
 
     let windowDuration = resetsAt.timeIntervalSince(windowStartedAt)
-    let projectedRemaining = 100 - usedPercent * windowDuration / observedDuration
-    let percentage = Int(projectedRemaining.rounded())
+    let buffer = 100 * observedDuration / windowDuration - usedPercent
+    if buffer >= 0 {
+      let points = Int(buffer.rounded())
+      return points == 0 ? .onPace : .buffer(percentagePoints: points)
+    }
 
-    if abs(percentage) <= 5 { return .onPace }
-    if percentage > 0 { return .reserve(percent: percentage) }
-    return .overshoot(percent: -percentage)
+    let observedRate = usedPercent / observedDuration
+    let runway = remainingPercent / observedRate
+    let timeUntilReset = resetsAt.timeIntervalSince(observedAt)
+    return .deficit(
+      emptyAt: observedAt.addingTimeInterval(runway),
+      reductionPercent: 100 * (1 - runway / timeUntilReset))
   }
 
   public func isStale(at date: Date) -> Bool {

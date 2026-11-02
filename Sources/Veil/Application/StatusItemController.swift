@@ -10,7 +10,12 @@ final class StatusItemController: NSObject {
   private let store: UsageStore
   private var observation: AnyCancellable?
   private var clock: Timer?
-  private var displayedPercentages: [Int?] = []
+  private var displayedReadings: [StatusReading] = []
+
+  private struct StatusReading: Equatable {
+    let percentage: Int?
+    let isOutOfDate: Bool
+  }
 
   init(store: UsageStore) {
     self.store = store
@@ -24,11 +29,14 @@ final class StatusItemController: NSObject {
     popover.contentViewController = PanelViewController(store: store) { [weak self] in
       self?.openActions()
     }
-    observation = store.$allowances.combineLatest(store.$phase).sink { [weak self] _, _ in
-      self?.updateStatusTitle()
-    }
+    observation = store.$states.combineLatest(store.$isSampleData)
+      .receive(on: RunLoop.main)
+      .sink { [weak self] _, _ in self?.updateStatusTitle() }
     clock = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-      Task { @MainActor in self?.updateStatusTitle() }
+      Task { @MainActor in
+        self?.store.refreshIfNeeded()
+        self?.updateStatusTitle()
+      }
     }
     updateStatusTitle()
   }
@@ -50,15 +58,13 @@ final class StatusItemController: NSObject {
     NSApp.activate()
     popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
     popover.contentViewController?.view.window?.makeKey()
-    let needsRefresh = store.allowances.values.contains {
-      $0.isStale(at: .now) || $0.resetsAt <= .now
-    }
-    if needsRefresh { store.refresh() }
+    store.refreshIfNeeded()
   }
 
   func openActions() {
     let menu = NSMenu()
-    let sampleLabel = NSMenuItem(title: "Veil · Sample data", action: nil, keyEquivalent: "")
+    let sampleLabel = NSMenuItem(
+      title: store.isSampleData ? "Veil · Sample data" : "Veil", action: nil, keyEquivalent: "")
     sampleLabel.isEnabled = false
     menu.addItem(sampleLabel)
     menu.addItem(.separator())
@@ -66,7 +72,22 @@ final class StatusItemController: NSObject {
     refresh.target = self
     menu.addItem(refresh)
 
+    if store.states[.claude]?.failure == .credentialAccess {
+      let connect = NSMenuItem(
+        title: "Allow Claude Keychain Access…", action: #selector(allowClaudeKeychainAccess),
+        keyEquivalent: "")
+      connect.target = self
+      menu.addItem(connect)
+    }
+
     #if DEBUG
+      if store.isSampleData {
+        let connected = NSMenuItem(
+          title: "Use Connected Accounts", action: #selector(useConnectedAccounts),
+          keyEquivalent: "")
+        connected.target = self
+        menu.addItem(connected)
+      }
       let previews = NSMenu()
       for (index, scenario) in SampleScenario.allCases.enumerated() {
         let item = NSMenuItem(
@@ -89,8 +110,11 @@ final class StatusItemController: NSObject {
   }
 
   @objc private func refreshUsage() { store.refresh() }
+  @objc private func allowClaudeKeychainAccess() { store.allowClaudeKeychainAccess() }
 
   #if DEBUG
+    @objc private func useConnectedAccounts() { store.useConnectedAccounts() }
+
     @objc private func selectScenario(_ item: NSMenuItem) {
       store.showSampleScenario(SampleScenario.allCases[item.tag])
     }
@@ -98,18 +122,22 @@ final class StatusItemController: NSObject {
 
   private func updateStatusTitle() {
     let date = Date.now
-    let percentages = Provider.allCases.map {
-      UsageText.remainingPercentage(store.allowances[$0], at: date)
+    let readings = Provider.allCases.map { provider in
+      let state = store.states[provider]
+      return StatusReading(
+        percentage: UsageText.remainingPercentage(state?.allowance, at: date),
+        isOutOfDate: state?.failure != nil || (state?.allowance?.isStale(at: date) ?? false))
     }
-    if percentages != displayedPercentages {
+    if readings != displayedReadings {
       let label = HStack(spacing: 9) {
         ForEach(Array(Provider.allCases.enumerated()), id: \.element) { index, provider in
           HStack(spacing: 3) {
             ProviderMark(provider: provider, size: 13)
-            Text(percentages[index].map { "\($0)%" } ?? "—")
+            Text(readings[index].percentage.map { "\($0)%" } ?? "—")
               .font(.system(size: 11, weight: .medium))
               .monospacedDigit()
           }
+          .opacity(readings[index].isOutOfDate ? 0.45 : 1)
         }
       }
       .foregroundStyle(.black)
@@ -119,17 +147,18 @@ final class StatusItemController: NSObject {
       let image = renderer.nsImage
       image?.isTemplate = true
       statusItem.button?.image = image
-      displayedPercentages = percentages
+      displayedReadings = readings
     }
     let descriptions = Provider.allCases.enumerated().map { index, provider in
-      guard let percentage = percentages[index] else {
-        return "\(provider.displayName): unavailable"
+      guard let percentage = readings[index].percentage else {
+        return "\(provider.displayName): \(store.states[provider]?.failure?.title ?? "unavailable")"
       }
-      let stale = store.allowances[provider]?.isStale(at: date) ?? false
       return
-        "\(provider.displayName): \(percentage)% left this week\(stale ? " (out of date)" : "")"
+        "\(provider.displayName): \(percentage)% left this week\(readings[index].isOutOfDate ? " (out of date)" : "")"
     }
-    let description = "Veil · Sample data\n" + descriptions.joined(separator: "\n")
+    let description =
+      (store.isSampleData ? "Veil · Sample data\n" : "Veil\n")
+      + descriptions.joined(separator: "\n")
     statusItem.button?.toolTip = description
     statusItem.button?.setAccessibilityLabel(description)
   }

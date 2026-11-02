@@ -11,8 +11,7 @@ struct AllowancePanel: View {
         ForEach(Provider.allCases, id: \.self) { provider in
           AllowanceRow(
             provider: provider,
-            allowance: store.allowances[provider],
-            isLoading: store.phase == .loading,
+            state: store.states[provider] ?? UsageStore.ProviderState(),
             date: context.date
           )
         }
@@ -29,11 +28,15 @@ struct AllowancePanel: View {
       Text(footerText)
         .font(.system(size: 10))
         .foregroundStyle(.secondary)
-        .help("Sample data. No provider accounts are connected.")
+        .help(
+          store.isSampleData
+            ? "Sample data. No provider accounts are connected."
+            : "Each provider refreshes independently every five minutes. Its update time appears below its name."
+        )
       Spacer(minLength: 0)
       Button(action: store.refresh) {
         Group {
-          if store.phase.isRefreshing {
+          if store.isRefreshing {
             ProgressView().controlSize(.mini)
           } else {
             Image(systemName: "arrow.clockwise")
@@ -41,9 +44,9 @@ struct AllowancePanel: View {
         }
         .frame(width: 24, height: 24)
       }
-      .disabled(store.phase.isRefreshing)
+      .disabled(store.isRefreshing)
       .keyboardShortcut("r", modifiers: .command)
-      .help("Refresh sample data (⌘R)")
+      .help("Refresh weekly allowances (⌘R)")
       .accessibilityLabel("Refresh weekly allowances")
 
       Button(action: openActions) {
@@ -60,19 +63,23 @@ struct AllowancePanel: View {
   }
 
   private var footerText: String {
-    if store.phase.isRefreshing { return "Sample data · Refreshing…" }
-    if store.phase == .failed { return "Sample data · Refresh failed" }
-    return "Sample data"
+    if store.isSampleData {
+      return store.isRefreshing ? "Sample data · Refreshing…" : "Sample data"
+    }
+    if store.isRefreshing { return "Refreshing…" }
+    return "Auto-refresh · 5 min"
   }
 }
 
 private struct AllowanceRow: View {
   let provider: Provider
-  let allowance: WeeklyAllowance?
-  let isLoading: Bool
+  let state: UsageStore.ProviderState
   let date: Date
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.colorScheme) private var colorScheme
+
+  private var allowance: WeeklyAllowance? { state.allowance }
+  private var isLoading: Bool { state.isRefreshing && allowance == nil }
 
   private var remainingPercentage: Int? {
     UsageText.remainingPercentage(allowance, at: date)
@@ -92,7 +99,7 @@ private struct AllowanceRow: View {
             .font(.system(size: 10))
             .foregroundStyle(isStale ? Color.orange : .secondary)
             .help(
-              allowance.map {
+              state.failure?.detail(for: provider) ?? allowance.map {
                 "\(provider.displayName) observed \($0.observedAt.formatted(date: .complete, time: .shortened))"
               } ?? "No observation from \(provider.displayName)."
             )
@@ -128,23 +135,7 @@ private struct AllowanceRow: View {
       .accessibilityHidden(true)
       .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: allowance?.usedPercent)
 
-      HStack(spacing: 8) {
-        Text(resetText)
-          .help(
-            allowance.map { "Resets \($0.resetsAt.formatted(date: .complete, time: .shortened))" }
-              ?? ""
-          )
-        Spacer(minLength: 0)
-        if let allowance {
-          paceLabel
-            .help(
-              "\(UsageText.pace(allowance.pace(at: date))). Based on average consumption since the weekly window began, not a prediction of future activity."
-            )
-            .accessibilityLabel(UsageText.pace(allowance.pace(at: date)))
-        }
-      }
-      .font(.system(size: 11))
-      .foregroundStyle(.secondary)
+      paceFooter
     }
     .lineLimit(1)
     .padding(12)
@@ -152,11 +143,14 @@ private struct AllowanceRow: View {
     .accessibilityElement(children: .contain)
   }
 
-  private var isStale: Bool { allowance?.isStale(at: date) ?? false }
+  private var isStale: Bool { state.failure != nil || (allowance?.isStale(at: date) ?? false) }
 
   private var freshnessText: String {
+    if isLoading { return "Checking…" }
+    if let failure = state.failure, allowance == nil { return failure.title }
     guard let allowance else { return isLoading ? "Checking…" : "No reading" }
     let age = UsageText.observationAge(allowance.observedAt, at: date)
+    if state.failure != nil { return "Update failed · \(age)" }
     return isStale ? "Out of date · \(age)" : "Updated \(age)"
   }
 
@@ -177,27 +171,75 @@ private struct AllowanceRow: View {
     return isLoading ? "Checking weekly allowance…" : "Weekly allowance unavailable"
   }
 
-  private var paceLabel: Text {
-    guard let allowance else { return Text("") }
-    switch allowance.pace(at: date) {
-    case .reserve(let percent):
-      return Text("\(percent)% reserve").foregroundStyle(paceColor)
-    case .overshoot(let percent):
-      return Text("\(percent)% over").foregroundStyle(paceColor)
-    case .onPace: return Text("On pace")
-    case .gatheringData: return Text("Estimating pace…")
-    case .awaitingReset: return Text("Awaiting new data")
+  @ViewBuilder
+  private var paceFooter: some View {
+    if let allowance {
+      let pace = allowance.pace(at: date)
+      switch pace {
+      case .deficit(let emptyAt, let reduction):
+        HStack(alignment: .top, spacing: 8) {
+          paceMetric("Resets in", value: UsageText.countdown(to: allowance.resetsAt, at: date))
+            .help("Resets \(allowance.resetsAt.formatted(date: .complete, time: .shortened))")
+          paceMetric(
+            emptyAt > date ? "Empty in" : "Empty",
+            value: UsageText.countdown(to: emptyAt, at: date), color: paceColor
+          )
+          .help("At the average consumption rate observed since the weekly window began.")
+          paceMetric("Ease off", value: "↓\(UsageText.reduction(reduction))", color: paceColor)
+            .accessibilityLabel(UsageText.pace(pace))
+            .help("Compared with average consumption since the weekly window began.")
+        }
+      case .buffer(let points): compactFooter("\(points)pp buffer", color: paceColor)
+      case .onPace: compactFooter("On pace")
+      case .gatheringData: compactFooter("Estimating pace…")
+      case .awaitingReset: compactFooter("Awaiting new data")
+      }
+    } else {
+      compactFooter("")
     }
   }
 
+  private func compactFooter(_ pace: String, color: Color = .secondary) -> some View {
+    HStack(spacing: 8) {
+      Text(resetText)
+        .help(
+          allowance.map { "Resets \($0.resetsAt.formatted(date: .complete, time: .shortened))" }
+            ?? ""
+        )
+      Spacer(minLength: 0)
+      if let allowance {
+        Text(pace)
+          .foregroundStyle(color)
+          .help(UsageText.pace(allowance.pace(at: date)))
+          .accessibilityLabel(UsageText.pace(allowance.pace(at: date)))
+      }
+    }
+    .font(.system(size: 11))
+    .foregroundStyle(.secondary)
+  }
+
+  private func paceMetric(_ title: String, value: String, color: Color = .secondary) -> some View {
+    VStack(alignment: .leading, spacing: 3) {
+      Text(title)
+        .font(.system(size: 10))
+        .foregroundStyle(.secondary)
+      Text(value)
+        .font(.system(size: 12, weight: .semibold))
+        .foregroundStyle(color)
+        .monospacedDigit()
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .accessibilityElement(children: .combine)
+  }
+
   private var paceColor: Color {
-    guard let allowance, !allowance.isStale(at: date) else { return .secondary }
+    guard let allowance, !isStale else { return .secondary }
     switch allowance.pace(at: date) {
-    case .reserve:
+    case .buffer:
       return colorScheme == .dark
         ? Color(red: 0.53, green: 0.75, blue: 0.59)
         : Color(red: 0.2, green: 0.45, blue: 0.32)
-    case .overshoot:
+    case .deficit:
       return colorScheme == .dark
         ? Color(red: 0.86, green: 0.66, blue: 0.36)
         : Color(red: 0.65, green: 0.38, blue: 0.08)

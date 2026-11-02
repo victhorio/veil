@@ -10,7 +10,8 @@
     init(store: UsageStore, arguments: [String]) {
       let scenarioName = Self.argument("--scenario", in: arguments) ?? "standard"
       let scenario = SampleScenario(rawValue: scenarioName) ?? .standard
-      store.showSampleScenario(scenario)
+      let live = arguments.contains("--live")
+      if live { store.refresh() } else { store.showSampleScenario(scenario) }
       statusController = StatusItemController(store: store)
       statusController.popover.appearance = NSApp.appearance
 
@@ -19,20 +20,22 @@
           do {
             try await Task.sleep(for: .milliseconds(200))
             statusController.togglePopover()
+            while store.isRefreshing { try await Task.sleep(for: .milliseconds(100)) }
             try await Task.sleep(for: .milliseconds(900))
             guard
               let window = statusController.popover.contentViewController?.view.window
             else {
               throw CaptureFailure.popoverNotVisible
             }
-            try await Self.capture(window, to: path)
             if let button = statusController.statusItem.button {
               let statusPath = (path as NSString).deletingPathExtension + "-menubar.png"
               if let image = button.image { try Self.captureStatusImage(image, to: statusPath) }
               print("Status item: \(button.frame.width) × \(button.frame.height) pt")
+              print(button.toolTip ?? "")
             }
+            try await Self.capture(window, to: path)
             print(
-              "Captured \(scenario.rawValue): \(window.frame.width) × \(window.frame.height) pt → \(path)"
+              "Captured \(live ? "live" : scenario.rawValue): \(window.frame.width) × \(window.frame.height) pt → \(path)"
             )
             NSApp.terminate(nil)
           } catch {
@@ -51,7 +54,7 @@
           backing: .buffered,
           defer: false
         )
-        reviewWindow.title = "Veil · Sample data"
+        reviewWindow.title = live ? "Veil" : "Veil · Sample data"
         reviewWindow.contentViewController = controller
         reviewWindow.center()
         reviewWindow.makeKeyAndOrderFront(nil)
