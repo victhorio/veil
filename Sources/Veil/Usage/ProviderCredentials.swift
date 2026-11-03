@@ -1,6 +1,5 @@
 import CryptoKit
 import Foundation
-import LocalAuthentication
 import Security
 
 struct ProviderCredentials: Sendable {
@@ -91,24 +90,13 @@ struct ProviderCredentials: Sendable {
 actor ClaudeKeychain {
   static let shared = ClaudeKeychain()
 
-  func read(allowPrompt: Bool) throws -> Data {
-    // Legacy login-keychain ACLs can ignore per-query interaction suppression.
-    guard SecKeychainSetUserInteractionAllowed(allowPrompt) == errSecSuccess else {
-      throw UsageFailure.credentialAccess
-    }
-    defer { SecKeychainSetUserInteractionAllowed(false) }
-
-    var query: [String: Any] = [
+  func read() throws -> Data {
+    let query: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: "Claude Code-credentials",
       kSecMatchLimit as String: kSecMatchLimitAll,
       kSecReturnPersistentRef as String: true,
     ]
-    if !allowPrompt {
-      let context = LAContext()
-      context.interactionNotAllowed = true
-      query[kSecUseAuthenticationContext as String] = context
-    }
     var matches: CFTypeRef?
     let status = SecItemCopyMatching(query as CFDictionary, &matches)
     if status == errSecItemNotFound { throw UsageFailure.signInRequired }
@@ -116,15 +104,53 @@ actor ClaudeKeychain {
       throw UsageFailure.credentialAccess
     }
     guard references.count == 1 else { throw UsageFailure.invalidCredentials }
-    query.removeValue(forKey: kSecAttrService as String)
-    query.removeValue(forKey: kSecReturnPersistentRef as String)
-    query[kSecValuePersistentRef as String] = references[0]
-    query[kSecMatchLimit as String] = kSecMatchLimitOne
-    query[kSecReturnData as String] = true
-    var result: CFTypeRef?
-    guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-      let data = result as? Data
-    else { throw UsageFailure.credentialAccess }
+
+    // Helper reads and hex decoding follow Tinybar (MIT; bundled Tinybar-LICENSE.txt).
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+    process.arguments = ["find-generic-password", "-s", "Claude Code-credentials", "-w"]
+    let output = Pipe()
+    process.standardInput = FileHandle.nullDevice
+    process.standardOutput = output
+    process.standardError = FileHandle.nullDevice
+    do { try process.run() } catch { throw UsageFailure.credentialAccess }
+    let watchdog = DispatchWorkItem { if process.isRunning { process.terminate() } }
+    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 5, execute: watchdog)
+    defer { watchdog.cancel() }
+    defer { try? output.fileHandleForReading.close() }
+    var bytes = Data()
+    while true {
+      let chunk = output.fileHandleForReading.availableData
+      if chunk.isEmpty { break }
+      guard bytes.count + chunk.count <= 256 * 1_024 else {
+        process.terminate()
+        process.waitUntilExit()
+        throw UsageFailure.invalidCredentials
+      }
+      bytes.append(chunk)
+    }
+    process.waitUntilExit()
+    if process.terminationReason == .exit, process.terminationStatus == 44 {
+      throw UsageFailure.signInRequired
+    }
+    guard process.terminationStatus == 0 else { throw UsageFailure.credentialAccess }
+    let text = String(decoding: bytes, as: UTF8.self)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    if text.hasPrefix("{") { return Data(text.utf8) }
+
+    guard !text.isEmpty, text.count.isMultiple(of: 2) else {
+      throw UsageFailure.invalidCredentials
+    }
+    var data = Data()
+    var index = text.startIndex
+    while index < text.endIndex {
+      let next = text.index(index, offsetBy: 2)
+      guard let byte = UInt8(text[index..<next], radix: 16) else {
+        throw UsageFailure.invalidCredentials
+      }
+      data.append(byte)
+      index = next
+    }
     return data
   }
 }

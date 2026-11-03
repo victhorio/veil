@@ -28,8 +28,7 @@ actor LiveUsageSource: UsageSource {
     self.home = home
   }
 
-  func fetchWeeklyAllowance(for provider: Provider, allowCredentialPrompt: Bool) async -> UsageFetch
-  {
+  func fetchWeeklyAllowance(for provider: Provider) async -> UsageFetch {
     var credentialID: String?
     do {
       try Task.checkCancellation()
@@ -54,7 +53,7 @@ actor LiveUsageSource: UsageSource {
           else {
             throw UsageFailure.signInRequired
           }
-          data = try await ClaudeKeychain.shared.read(allowPrompt: allowCredentialPrompt)
+          data = try await ClaudeKeychain.shared.read()
         }
         credentials = try .claude(data: data)
       }

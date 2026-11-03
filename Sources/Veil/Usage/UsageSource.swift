@@ -2,7 +2,7 @@ import Allowance
 import Foundation
 
 protocol UsageSource: Sendable {
-  func fetchWeeklyAllowance(for provider: Provider, allowCredentialPrompt: Bool) async -> UsageFetch
+  func fetchWeeklyAllowance(for provider: Provider) async -> UsageFetch
 }
 
 struct UsageFetch: Sendable {
@@ -42,7 +42,7 @@ enum UsageFailure: Error, Equatable, Sendable {
     case .loginExpired:
       "The saved \(provider.displayName) access token has expired. Open \(provider.displayName) to renew its login, then refresh Veil. Veil never renews another app’s credentials."
     case .credentialAccess:
-      "Choose Allow Claude Keychain Access in Veil’s options. Background refresh never opens a Keychain prompt."
+      "Could not read the Claude Code login from Keychain. Unlock your login keychain and refresh. macOS may ask permission for /usr/bin/security to read it."
     case .invalidCredentials:
       "The \(provider.displayName) login is unreadable or unsupported. Sign in with its subscription account, then refresh."
     case .noWeeklyAllowance:
@@ -95,9 +95,7 @@ enum UsageFailure: Error, Equatable, Sendable {
       self.scenario = scenario
     }
 
-    func fetchWeeklyAllowance(for provider: Provider, allowCredentialPrompt: Bool) async
-      -> UsageFetch
-    {
+    func fetchWeeklyAllowance(for provider: Provider) async -> UsageFetch {
       try? await Task.sleep(for: .milliseconds(650))
       let result: Result<WeeklyAllowance, UsageFailure>
       if scenario == .offline {

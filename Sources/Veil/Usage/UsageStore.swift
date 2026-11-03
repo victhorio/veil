@@ -42,15 +42,12 @@ final class UsageStore: ObservableObject {
     }
   }
 
-  func allowClaudeKeychainAccess() { refresh(.claude, allowCredentialPrompt: true) }
-
-  private func refresh(_ provider: Provider, allowCredentialPrompt: Bool = false) {
+  private func refresh(_ provider: Provider) {
     guard refreshTasks[provider] == nil else { return }
     states[provider, default: ProviderState()].isRefreshing = true
     let source = source
     refreshTasks[provider] = Task {
-      let fetch = await source.fetchWeeklyAllowance(
-        for: provider, allowCredentialPrompt: allowCredentialPrompt)
+      let fetch = await source.fetchWeeklyAllowance(for: provider)
       guard !Task.isCancelled else { return }
       var state = states[provider] ?? ProviderState()
       if fetch.credentialID != state.credentialID { state.allowance = nil }

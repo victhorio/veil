@@ -78,14 +78,6 @@ final class StatusItemController: NSObject {
     compact.state = isCompact ? .on : .off
     menu.addItem(compact)
 
-    if store.states[.claude]?.failure == .credentialAccess {
-      let connect = NSMenuItem(
-        title: "Allow Claude Keychain Access…", action: #selector(allowClaudeKeychainAccess),
-        keyEquivalent: "")
-      connect.target = self
-      menu.addItem(connect)
-    }
-
     #if DEBUG
       if store.isSampleData {
         let connected = NSMenuItem(
@@ -116,7 +108,6 @@ final class StatusItemController: NSObject {
   }
 
   @objc private func refreshUsage() { store.refresh() }
-  @objc private func allowClaudeKeychainAccess() { store.allowClaudeKeychainAccess() }
 
   @objc private func toggleCompactMenuBar() {
     isCompact.toggle()
