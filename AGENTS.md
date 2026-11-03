@@ -1,39 +1,24 @@
 # Veil
 
-Native macOS 27 menu-bar app for Codex and Claude Code weekly subscription allowance. Normal launches use existing CLI logins; samples are debug-only.
+Native macOS 27 menu-bar app for Codex and Claude Code weekly subscription allowance. Swift 6.2+, Swift Package Manager, no external dependencies or Xcode project. Normal launches use existing CLI logins; samples and capture tooling are debug-only.
 
-## Product boundary
+## Repository map
 
-One compact menu-bar item shows both weekly percentages remaining. The tabless popover stacks both providers, showing remaining allowance and reset. Surplus shows current budget headroom in percentage points, not projected leftovers. Deficit shows “Resets in”, “Empty in”, and “Ease off”: both exhaustion timing and the reduction from observed average consumption must be visible without hovering.
-
-Use native typography, glass, controls, and accessibility, with the actual provider marks and compact inset cards. Pace labels omit “Est.”; tooltips explain the baseline. Keep sample data identifiable. Missing readings are not zero; expired readings become dashes. Stale or failed readings dim in both surfaces and retain their original observation times. Pace uses accumulated consumption since the window began, not measured current workload; stale data must not improve its own forecast as the clock advances.
-
-No extra providers, provider tabs, costs, tokens, charts, credits, activity history, or preferences window. The footer holds refresh; the gear menu holds app actions.
-
-## Ownership
-
-- `Sources/Allowance`: Foundation-only domain and pace arithmetic; no UI or I/O.
-- `Sources/Veil/Usage`: credentials, transport, decoding, and observable provider state. The store owns scheduling and retained readings; the source owns HTTP cooldowns.
-- `Sources/Veil/Application` and `Interface`: AppKit lifecycle and SwiftUI presentation. Views do not fetch usage or calculate forecasts.
-- `Sources/Veil/Development`: debug-only tooling that exercises the real UI, not a parallel implementation.
+- `Sources/Allowance`: Foundation-only weekly observations and pace arithmetic; no UI or I/O.
+- `Sources/Veil/Usage`: credentials, transport, decoding, and provider state. The store owns scheduling and retained readings; the source owns HTTP cooldowns.
+- `Sources/Veil/Application`: AppKit lifecycle, menu-bar item, popover, and actions.
+- `Sources/Veil/Interface`: SwiftUI presentation and provider marks; no fetching or forecast arithmetic.
+- `Sources/Veil/Development`: previews and captures using the real UI.
 - `Sources/Veil/Resources/Artwork.md`: artwork provenance and bundled license.
-- `reports` and `research_notes`: historical discovery, not the current specification.
+- `reports` and `research_notes`: historical discovery, not the current specification. The README links the upstream reference implementations.
 
-Bias against retained tests and comments; prefer clear types and names. Keep a permanent test only for a meaningful public contract needing ongoing regression protection. Temporary validation belongs under `.amp/in/`; review artifacts belong under `.amp/in/artifacts/`.
+## Product semantics
 
-## Integration boundaries
+- One compact menu-bar item and a tabless, stacked popover show both providers' weekly allowance, reset, and pace. Scope excludes additional providers, costs, tokens, charts, credits, activity history, and a preferences window. Use native controls and the actual provider marks.
+- Buffer means current budget headroom in percentage points, not projected leftovers. Deficit shows “Resets in”, “Empty in”, and “Ease off” without hovering. Pace is based on average consumption since the weekly window began, not current workload.
+- Missing readings are not zero; expired windows show dashes. Stale or failed readings retain their observation times, dim in both surfaces, and must not gain a better forecast as time passes. Samples remain visibly identified.
 
-Credentials are read-only. No renewal, credential writes, browser access, subprocess fallbacks, or usage-log scanning. Use only overall weekly subscription quotas; do not substitute session or model-specific limits. The private endpoints and CLI credential stores are compatibility surfaces, not stable public APIs.
-
-Custom directory overrides must be absolute. Finder-launched apps do not inherit shell-only environment variables. Do not guess custom-profile Keychain services or fall back to the default profile's item when a custom profile is missing.
-
-Keychain reads stay off MainActor. Per-query suppression alone can still open or hang on legacy login-keychain ACL prompts; the serialized reader intentionally uses the deprecated process-wide no-interaction switch. Only the explicit gear-menu action permits a prompt. Claude Code can replace its item, and ad-hoc rebuilds change Veil's identity, so access may need granting again.
-
-Keep provider refreshes independent and respect `Retry-After`, including manual refreshes and debug source switches. Manual checks still inspect credentials during cooldown, without making HTTP requests. Failed checks must not make a retained reading look newly observed or carry it across a detected login change. Login changes are detected on checks, not through filesystem watching; in-flight results belong to the credentials read at request start.
-
-Use ephemeral HTTP without shared cookies, response cache, or credential storage; reject redirects. Never log credentials, response bodies, account identifiers, or credential fingerprints.
-
-## Build and run
+## Local development
 
 ```sh
 ./scripts/build
@@ -43,14 +28,28 @@ xcrun swift-format format --in-place --recursive Sources Package.swift
 xcrun swift-format lint --strict --recursive Sources Package.swift
 ```
 
-`build` produces `.build/Veil.app`, ad-hoc signed for local use; `run` builds and launches it. Neither installs the app nor changes login items. The project uses Swift Package Manager with no external dependencies or Xcode project.
+Both build configurations write `.build/Veil.app`, ad-hoc signed for local use. `run` builds debug and launches that bundle. Neither script installs the app or changes login items. There is currently no test target.
 
-For a native debug capture, after building:
+For a native capture, build debug first; release builds ignore the preview/capture arguments:
 
 ```sh
+./scripts/build
+mkdir -p .amp/in/artifacts
 .build/Veil.app/Contents/MacOS/Veil --capture .amp/in/artifacts/standard.png --scenario standard --appearance light
 ```
 
-Use `--appearance dark` for dark mode; omit it to follow the system. `--preview` opens a standalone review window. Other sample states are listed in `SampleScenario`. Adding `--live` reads actual credentials and makes provider requests; otherwise preview/capture uses samples. The accompanying `-menubar.png` is template artwork on white, not a desktop screenshot.
+`--preview` opens a standalone window. Use `--appearance dark` for dark mode; omit it to follow the system. Scenarios are defined in `SampleScenario`. Preview/capture uses samples unless `--live` is supplied, which reads credentials and makes real requests. The accompanying `-menubar.png` is template artwork on white, not a desktop screenshot.
 
-Capture uses ScreenCaptureKit's current-process API. Glass requires compositor capture: `NSView.cacheDisplay` omits its contents. For `SCStreamError -3811`, check `replayd` logs for `TCC Disallow` before changing rendering code. For in-process accessibility probes, enable `AXEnhancedUserInterface` before traversing SwiftUI's lazy tree. Allow native presentation/dismissal animations to finish before asserting visibility.
+Glass requires compositor capture; `NSView.cacheDisplay` omits its contents. `SCStreamError -3811` can be a TCC denial; check `replayd` logs. In-process accessibility probes need `AXEnhancedUserInterface` enabled to expose SwiftUI's lazy tree, and visibility checks need to allow native animations to finish.
+
+## Integration notes
+
+- Provider endpoints and CLI credential stores are private compatibility surfaces. Use overall weekly subscription quotas, not session or model-specific limits.
+- Credentials belong to the CLIs. Reading them does not authorize renewing or rewriting them. Never log credentials, response bodies, account identifiers, or credential fingerprints.
+- Custom directory overrides are absolute. Finder-launched apps do not inherit shell-only environment variables. A missing custom-profile login must not silently select the default account.
+- Keychain reads can block or prompt and belong off MainActor. Claude Code renewal can change an item's access list; ad-hoc rebuilds change Veil's code identity. A working CLI login does not establish that Veil can read the same credential.
+- Provider refreshes are independent and honor `Retry-After`, including manual checks. A failed check must not make retained data look newly observed or carry it across a detected login change.
+
+## Local conventions
+
+Bias against retained tests and comments; prefer clear types and names. Keep a permanent test for a meaningful public contract needing regression protection. Temporary validation belongs under `.amp/in/`; review artifacts belong under `.amp/in/artifacts/`.
