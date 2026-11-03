@@ -97,7 +97,10 @@
       NSRect(origin: .zero, size: canvas.size).fill()
       let artwork = image.copy() as! NSImage
       artwork.isTemplate = false
-      artwork.draw(in: NSRect(x: 6, y: 2, width: image.size.width, height: 18))
+      artwork.draw(
+        in: NSRect(
+          x: 6, y: (canvas.size.height - image.size.height) / 2,
+          width: image.size.width, height: image.size.height))
       canvas.unlockFocus()
       guard let tiff = canvas.tiffRepresentation,
         let bitmap = NSBitmapImageRep(data: tiff),

@@ -134,7 +134,7 @@ final class StatusItemController: NSObject {
     if force || readings != displayedReadings {
       let layout =
         isCompact
-        ? AnyLayout(VStackLayout(alignment: .leading, spacing: 0))
+        ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2))
         : AnyLayout(HStackLayout(spacing: 9))
       let label = layout {
         ForEach(Array(Provider.allCases.enumerated()), id: \.element) {
@@ -152,7 +152,7 @@ final class StatusItemController: NSObject {
         }
       }
       .foregroundStyle(.black)
-      .frame(height: 18)
+      .frame(height: isCompact ? 20 : 18)
       let renderer = ImageRenderer(content: label)
       renderer.scale = 2
       let image = renderer.nsImage
