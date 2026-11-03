@@ -2,8 +2,6 @@ import Allowance
 import Foundation
 
 enum WeeklyUsageDecoder {
-  static let week: TimeInterval = 604_800
-
   static func codex(_ data: Data, observedAt: Date) throws -> WeeklyAllowance {
     struct Response: Decodable {
       struct Limits: Decodable {
@@ -19,7 +17,8 @@ enum WeeklyUsageDecoder {
           init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             let duration = try container.decode(Int.self, forKey: .limitWindowSeconds)
-            weekly = duration == Int(WeeklyUsageDecoder.week) ? try Reading(from: decoder) : nil
+            weekly =
+              duration == Int(WeeklyAllowance.windowDuration) ? try Reading(from: decoder) : nil
           }
         }
         let primaryWindow: Window?
@@ -65,10 +64,9 @@ enum WeeklyUsageDecoder {
     -> WeeklyAllowance
   {
     guard used.isFinite, (0...100).contains(used), reset.timeIntervalSince1970.isFinite,
-      reset.timeIntervalSince(observedAt) <= week
+      reset.timeIntervalSince(observedAt) <= WeeklyAllowance.windowDuration
     else { throw UsageFailure.invalidResponse }
     return WeeklyAllowance(
-      usedPercent: used, windowStartedAt: reset.addingTimeInterval(-week),
-      resetsAt: reset, observedAt: observedAt)
+      usedPercent: used, resetsAt: reset, observedAt: observedAt)
   }
 }

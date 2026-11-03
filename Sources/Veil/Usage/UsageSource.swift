@@ -111,7 +111,7 @@ enum UsageFailure: Error, Equatable, Sendable {
     func allowances(at date: Date) -> [Provider: WeeklyAllowance] {
       if scenario == .offline { return [:] }
 
-      let week: TimeInterval = 7 * 24 * 3_600
+      let week = WeeklyAllowance.windowDuration
 
       return Dictionary(
         uniqueKeysWithValues: Provider.allCases.compactMap { provider in
@@ -142,7 +142,6 @@ enum UsageFailure: Error, Equatable, Sendable {
             provider,
             WeeklyAllowance(
               usedPercent: usedPercent,
-              windowStartedAt: start,
               resetsAt: start.addingTimeInterval(week),
               observedAt: observation
             )

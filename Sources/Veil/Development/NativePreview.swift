@@ -54,7 +54,7 @@
           backing: .buffered,
           defer: false
         )
-        reviewWindow.title = live ? "Veil" : "Veil · Sample data"
+        reviewWindow.title = "Veil Preview"
         reviewWindow.contentViewController = controller
         reviewWindow.center()
         reviewWindow.makeKeyAndOrderFront(nil)

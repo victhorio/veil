@@ -83,7 +83,7 @@ actor LiveUsageSource: UsageSource {
       switch response.statusCode {
       case 200: break
       case 401, 403: throw UsageFailure.signInRequired
-      case 429:
+      case 503 where response.value(forHTTPHeaderField: "Retry-After") != nil, 429:
         let until = Self.retryDate(response, now: .now)
         cooldowns[provider] = until
         throw UsageFailure.rateLimited(until: until)

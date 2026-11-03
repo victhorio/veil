@@ -21,23 +21,23 @@ public enum WeeklyPace: Equatable, Sendable {
 }
 
 public struct WeeklyAllowance: Equatable, Sendable {
+  public static let windowDuration: TimeInterval = 604_800
+
   public let usedPercent: Double
-  public let windowStartedAt: Date
   public let resetsAt: Date
   public let observedAt: Date
 
   public init(
     usedPercent: Double,
-    windowStartedAt: Date,
     resetsAt: Date,
     observedAt: Date
   ) {
     self.usedPercent = usedPercent
-    self.windowStartedAt = windowStartedAt
     self.resetsAt = resetsAt
     self.observedAt = observedAt
   }
 
+  public var windowStartedAt: Date { resetsAt.addingTimeInterval(-Self.windowDuration) }
   public var remainingPercent: Double { max(0, 100 - usedPercent) }
 
   public func pace(at date: Date) -> WeeklyPace {
@@ -47,8 +47,7 @@ public struct WeeklyAllowance: Equatable, Sendable {
     let observedDuration = observedAt.timeIntervalSince(windowStartedAt)
     guard observedDuration >= 3_600 else { return .gatheringData }
 
-    let windowDuration = resetsAt.timeIntervalSince(windowStartedAt)
-    let buffer = 100 * observedDuration / windowDuration - usedPercent
+    let buffer = 100 * observedDuration / Self.windowDuration - usedPercent
     if buffer >= 0 {
       let points = Int(buffer.rounded())
       return points == 0 ? .onPace : .buffer(percentagePoints: points)
