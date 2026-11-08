@@ -1,10 +1,12 @@
 import Allowance
+import Darwin
 import Foundation
 
-actor LiveUsageSource: UsageSource {
-  private let session: URLSession
+public actor LiveUsageSource: UsageSource {
+  private let session: URLSession?
   private let environment: [String: String]
   private let home: URL
+  private let cooldownDirectory: URL
   private var cooldowns: [Provider: Date] = [:]
 
   private static let defaultSession: URLSession = {
@@ -18,17 +20,20 @@ actor LiveUsageSource: UsageSource {
       configuration: configuration, delegate: NoUsageRedirects(), delegateQueue: nil)
   }()
 
-  init(
+  public init(
     session: URLSession? = nil,
     environment: [String: String] = ProcessInfo.processInfo.environment,
-    home: URL = FileManager.default.homeDirectoryForCurrentUser
+    home: URL = FileManager.default.homeDirectoryForCurrentUser,
+    cooldownDirectory: URL? = nil
   ) {
-    self.session = session ?? Self.defaultSession
+    self.session = session
     self.environment = environment
     self.home = home
+    self.cooldownDirectory =
+      cooldownDirectory ?? home.appendingPathComponent("Library/Caches/Veil", isDirectory: true)
   }
 
-  func fetchWeeklyAllowance(for provider: Provider) async -> UsageFetch {
+  public func fetchWeeklyAllowance(for provider: Provider) async -> UsageFetch {
     var credentialID: String?
     do {
       try Task.checkCancellation()
@@ -59,7 +64,8 @@ actor LiveUsageSource: UsageSource {
       }
       try Task.checkCancellation()
       credentialID = credentials.identity
-      if let until = cooldowns[provider], Date.now < until {
+      let until = cooldown(for: provider)
+      if Date.now < until {
         throw UsageFailure.rateLimited(until: until)
       }
       let url =
@@ -78,14 +84,13 @@ actor LiveUsageSource: UsageSource {
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
       }
-      let (data, response) = try await session.data(for: request)
+      let (data, response) = try await (session ?? Self.defaultSession).data(for: request)
       guard let response = response as? HTTPURLResponse else { throw UsageFailure.invalidResponse }
       switch response.statusCode {
       case 200: break
       case 401, 403: throw UsageFailure.signInRequired
       case 503 where response.value(forHTTPHeaderField: "Retry-After") != nil, 429:
-        let until = Self.retryDate(response, now: .now)
-        cooldowns[provider] = until
+        let until = recordCooldown(Self.retryDate(response, now: .now), for: provider)
         throw UsageFailure.rateLimited(until: until)
       default: throw UsageFailure.serviceUnavailable
       }
@@ -107,6 +112,35 @@ actor LiveUsageSource: UsageSource {
     guard let value = environment[name], !value.isEmpty else { return fallback }
     guard value.hasPrefix("/") else { throw UsageFailure.invalidCredentials }
     return URL(fileURLWithPath: value, isDirectory: true)
+  }
+
+  private func cooldown(for provider: Provider) -> Date {
+    let file = cooldownDirectory.appendingPathComponent("\(provider.rawValue)-retry-after")
+    let saved = (try? String(contentsOf: file, encoding: .utf8))
+      .flatMap(Double.init).flatMap { $0.isFinite ? Date(timeIntervalSince1970: $0) : nil }
+    return max(cooldowns[provider] ?? .distantPast, saved ?? .distantPast)
+  }
+
+  private func recordCooldown(_ requested: Date, for provider: Provider) -> Date {
+    var until = max(requested, cooldown(for: provider))
+    defer { cooldowns[provider] = until }
+    do {
+      try FileManager.default.createDirectory(
+        at: cooldownDirectory, withIntermediateDirectories: true)
+    } catch {
+      return until
+    }
+    let lockFile = cooldownDirectory.appendingPathComponent("\(provider.rawValue).lock")
+    let descriptor = open(lockFile.path, O_CREAT | O_WRONLY | O_CLOEXEC, 0o600)
+    guard descriptor >= 0 else { return until }
+    defer { close(descriptor) }
+    guard flock(descriptor, LOCK_EX) == 0 else { return until }
+    defer { flock(descriptor, LOCK_UN) }
+
+    until = max(until, cooldown(for: provider))
+    let file = cooldownDirectory.appendingPathComponent("\(provider.rawValue)-retry-after")
+    try? Data(String(until.timeIntervalSince1970).utf8).write(to: file, options: .atomic)
+    return until
   }
 
   private static func retryDate(_ response: HTTPURLResponse, now: Date) -> Date {

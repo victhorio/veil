@@ -1,11 +1,13 @@
 # Veil
 
-Native macOS 27 menu-bar app for Codex and Claude Code weekly subscription allowance. Swift 6.2+, Swift Package Manager, no external dependencies or Xcode project. Normal launches use existing CLI logins; samples and capture tooling are debug-only.
+Native macOS 27 menu-bar app and `veil` CLI for Codex and Claude Code weekly subscription allowance. Swift 6.2+, Swift Package Manager, no external dependencies or Xcode project. Normal launches use existing CLI logins; samples and capture tooling are debug-only.
 
 ## Repository map
 
 - `Sources/Allowance`: Foundation-only weekly observations and pace arithmetic; no UI or I/O.
-- `Sources/Veil/Usage`: credentials, transport, decoding, and provider state. The store owns scheduling and retained readings; the source owns HTTP cooldowns.
+- `Sources/VeilUsage`: shared credentials, transport, decoding, and persisted HTTP cooldowns.
+- `Sources/VeilCLI`: argument parsing and plain-text/JSON output; no GUI dependencies or saved readings.
+- `Sources/Veil/Usage`: app scheduling and retained readings.
 - `Sources/Veil/Application`: AppKit lifecycle, menu-bar item, popover, and actions.
 - `Sources/Veil/Interface`: SwiftUI presentation and provider marks; no fetching or forecast arithmetic.
 - `Sources/Veil/Development`: previews and captures using the real UI.
@@ -16,7 +18,7 @@ Native macOS 27 menu-bar app for Codex and Claude Code weekly subscription allow
 
 - One compact menu-bar item and a tabless, stacked popover show both providers' weekly allowance, reset, and pace. Scope excludes additional providers, costs, tokens, charts, credits, activity history, and a preferences window. Use native controls and the actual provider marks.
 - Buffer means current budget headroom in percentage points, not projected leftovers. Deficit shows “Resets in”, “Empty in”, and “Ease off” without hovering. Pace is based on average consumption since the weekly window began, not current workload.
-- Missing readings are not zero; expired windows show dashes. Stale or failed readings retain their observation times, dim in both surfaces, and must not gain a better forecast as time passes. Samples remain visibly identified.
+- Missing readings are not zero; expired windows show dashes. Stale or failed readings retain their observation times, dim in the menu-bar item and popover, and must not gain a better forecast as time passes. CLI output marks stale readings explicitly. Samples remain visibly identified.
 
 ## Local development
 
@@ -24,11 +26,12 @@ Native macOS 27 menu-bar app for Codex and Claude Code weekly subscription allow
 ./scripts/build
 ./scripts/run
 ./scripts/build release
-xcrun swift-format format --in-place --recursive Sources Package.swift
-xcrun swift-format lint --strict --recursive Sources Package.swift
+swift test
+xcrun swift-format format --in-place --recursive Sources Tests Package.swift
+xcrun swift-format lint --strict --recursive Sources Tests Package.swift
 ```
 
-Both build configurations write `.build/Veil.app`, ad-hoc signed for local use. `run` builds debug and launches that bundle. Neither script installs the app or changes login items. There is currently no test target.
+Both build configurations write `.build/Veil.app`, ad-hoc signed for local use, and print the standalone `veil` path. The app's SwiftPM product is `VeilApp` so it cannot collide with `veil` on case-insensitive volumes. `run` builds debug and launches the app. Neither script installs anything or changes login items.
 
 For a native capture, build debug first; release builds ignore the preview/capture arguments:
 

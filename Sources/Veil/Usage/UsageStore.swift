@@ -1,6 +1,7 @@
 import Allowance
 import Combine
 import Foundation
+import VeilUsage
 
 @MainActor
 final class UsageStore: ObservableObject {
